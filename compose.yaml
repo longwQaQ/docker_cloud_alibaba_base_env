@@ -81,7 +81,11 @@ services:
           response=$$(curl -fsS -X POST http://nacos:8848/nacos/v1/auth/users/admin \
             --data-urlencode "password=$$NACOS_ADMIN_PASSWORD" || true)
           printf 'Nacos 管理员初始化第 %s 次响应：%s\n' "$$attempt" "$$response"
-          if printf '%s' "$$response" | grep -q '"username":"nacos"'; then
+          login_response=$$(curl -fsS -X POST http://nacos:8848/nacos/v1/auth/login \
+            --data-urlencode "username=nacos" \
+            --data-urlencode "password=$$NACOS_ADMIN_PASSWORD" || true)
+          if printf '%s' "$$login_response" | grep -q '"accessToken"'; then
+            echo "Nacos 管理员登录验证通过。"
             exit 0
           fi
           sleep 2
