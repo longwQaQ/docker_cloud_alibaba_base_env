@@ -1,0 +1,5 @@
+.env
+.DS_Store
+mysql/data/
+nacos/logs/
+seata/logs/

@@ -1,0 +1,166 @@
+name: spring-cloud-alibaba-base
+
+services:
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?请先运行 scripts/init-env.sh}
+      MYSQL_DATABASE: nacos_config
+      MYSQL_USER: cloud
+      MYSQL_PASSWORD: ${MYSQL_APP_PASSWORD:?请先运行 scripts/init-env.sh}
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./mysql/init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${MYSQL_PORT:-3306}:3306"
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - backend
+
+  nacos:
+    image: nacos/nacos-server:v2.5.1
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+      MODE: standalone
+      PREFER_HOST_MODE: hostname
+      SPRING_DATASOURCE_PLATFORM: mysql
+      MYSQL_SERVICE_HOST: mysql
+      MYSQL_SERVICE_PORT: 3306
+      MYSQL_SERVICE_DB_NAME: nacos_config
+      MYSQL_SERVICE_USER: cloud
+      MYSQL_SERVICE_PASSWORD: ${MYSQL_APP_PASSWORD:?请先运行 scripts/init-env.sh}
+      MYSQL_SERVICE_DB_PARAM: characterEncoding=utf8&connectTimeout=3000&socketTimeout=10000&autoReconnect=true&useSSL=false&allowPublicKeyRetrieval=true
+      NACOS_AUTH_ENABLE: "true"
+      NACOS_AUTH_TOKEN: ${NACOS_AUTH_TOKEN:?请先运行 scripts/init-env.sh}
+      NACOS_AUTH_IDENTITY_KEY: ${NACOS_AUTH_IDENTITY_KEY:?请先运行 scripts/init-env.sh}
+      NACOS_AUTH_IDENTITY_VALUE: ${NACOS_AUTH_IDENTITY_VALUE:?请先运行 scripts/init-env.sh}
+      NACOS_AUTH_CACHE_ENABLE: "true"
+      MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: health,info,prometheus
+      JVM_XMS: 256m
+      JVM_XMX: 512m
+      JVM_XMN: 128m
+    volumes:
+      - nacos-logs:/home/nacos/logs
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${NACOS_HTTP_PORT:-8848}:8848"
+      - "${BIND_ADDRESS:-127.0.0.1}:${NACOS_GRPC_PORT:-9848}:9848"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8848/nacos/v1/console/health/readiness | grep -q OK"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 40s
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - backend
+
+  nacos-init:
+    image: nacos/nacos-server:v2.5.1
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        curl -fsS -X POST http://nacos:8848/nacos/v1/auth/users/admin
+        --data-urlencode "password=$$NACOS_ADMIN_PASSWORD"
+    environment:
+      NACOS_ADMIN_PASSWORD: ${NACOS_ADMIN_PASSWORD:?请先运行 scripts/init-env.sh}
+    depends_on:
+      nacos:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - backend
+
+  sentinel:
+    build:
+      context: ./sentinel
+      args:
+        SENTINEL_VERSION: 1.8.10
+        SENTINEL_SHA256: 9e0d11bc30006c9f70cde982b456fc7bd03b94ec9ab5c45c034eb66b968ca19e
+    restart: unless-stopped
+    command:
+      - -Dserver.port=8858
+      - -Dsentinel.dashboard.auth.username=${SENTINEL_USERNAME:-sentinel}
+      - -Dsentinel.dashboard.auth.password=${SENTINEL_PASSWORD:?请先运行 scripts/init-env.sh}
+      - -Dserver.servlet.session.cookie.http-only=true
+      - -Dserver.servlet.session.cookie.same-site=strict
+      - -jar
+      - /opt/sentinel/sentinel-dashboard.jar
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${SENTINEL_PORT:-8858}:8858"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:8858/"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+      - /home/sentinel/logs:size=128m,uid=10001,gid=10001
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - backend
+
+  seata:
+    image: apache/seata-server:2.6.0
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+      SEATA_IP: seata
+      SEATA_PORT: 8091
+      STORE_DB_PASSWORD: ${MYSQL_APP_PASSWORD:?请先运行 scripts/init-env.sh}
+      NACOS_USERNAME: nacos
+      NACOS_PASSWORD: ${NACOS_ADMIN_PASSWORD:?请先运行 scripts/init-env.sh}
+    volumes:
+      - ./seata/application.yml:/seata-server/resources/application.yml:ro
+      - seata-logs:/root/logs/seata
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${SEATA_PORT:-8091}:8091"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/8091'"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    depends_on:
+      mysql:
+        condition: service_healthy
+      nacos:
+        condition: service_healthy
+      nacos-init:
+        condition: service_completed_successfully
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - backend
+
+networks:
+  backend:
+    driver: bridge
+
+volumes:
+  mysql-data:
+  nacos-logs:
+  seata-logs:

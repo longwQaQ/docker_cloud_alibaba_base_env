@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: 检查 Shell 脚本
+        run: shellcheck scripts/*.sh
+
+      - name: 验证 Compose 与安全约束
+        run: ./scripts/validate.sh
+
+      - name: 构建 Sentinel 镜像
+        run: docker compose build --pull sentinel
+        env:
+          MYSQL_ROOT_PASSWORD: test-root-password
+          MYSQL_APP_PASSWORD: test-app-password
+          NACOS_AUTH_TOKEN: dGVzdC10b2tlbi10ZXN0LXRva2VuLXRlc3QtdG9rZW4tdGVzdC10b2tlbg==
+          NACOS_AUTH_IDENTITY_KEY: test-identity-key
+          NACOS_AUTH_IDENTITY_VALUE: test-identity-value
+          NACOS_ADMIN_PASSWORD: test-nacos-admin-password
+          SENTINEL_PASSWORD: test-sentinel-password
+
+  smoke-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: 完整启动验证
+        run: ./scripts/smoke-test.sh
