@@ -20,7 +20,13 @@ export NACOS_AUTH_IDENTITY_KEY NACOS_AUTH_IDENTITY_VALUE NACOS_ADMIN_PASSWORD
 export SENTINEL_PASSWORD
 
 cleanup() {
+  status=$?
+  if (( status != 0 )); then
+    docker compose ps -a || true
+    docker compose logs --no-color --tail=200 || true
+  fi
   docker compose down --volumes
+  exit "$status"
 }
 trap cleanup EXIT
 
